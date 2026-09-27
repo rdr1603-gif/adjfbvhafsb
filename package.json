@@ -6,7 +6,11 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "db:migrate": "node scripts/migrate-db.js",
+    "test:build": "tsc lib/sync-client.ts --outDir .tmp-test --module commonjs --target es2022 --moduleResolution node --skipLibCheck",
+    "test": "npm run test:build && node scripts/test-sync.js && node scripts/test-engine.js && node scripts/test-app.js"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
@@ -15,6 +19,7 @@
     "clsx": "^2.1.1",
     "lucide-react": "^1.16.0",
     "next": "16.3.3",
+    "pg": "^8.23.0",
     "react": "^19",
     "react-dom": "^19",
     "shadcn": "^4.11.0",
@@ -24,6 +29,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^24",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "postcss": "^8.5",
