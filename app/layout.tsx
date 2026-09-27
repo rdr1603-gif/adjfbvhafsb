@@ -6,6 +6,7 @@ export const metadata: Metadata = {
   title: 'PadelCoach Pro | Gestión para tu club',
   description: 'Gestioná alumnos, cuotas, pagos y agenda de tu club de pádel desde un solo lugar.',
   generator: 'v0.app',
+  manifest: '/manifest.webmanifest',
   icons: {
     icon: [
       {
