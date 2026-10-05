@@ -279,6 +279,44 @@ async function main() {
   check('la recuperacion llega completa en el otro dispositivo', recibidas.find((c) => String(c.id) === clasesReales[1].id)?.data?.status === 'Recuperada')
   check('el vinculo de recuperacion tambien llega', recibidas.find((c) => String(c.id) === clasesReales[1].id)?.data?.recoveredFrom === clasesReales[0].id)
 
+  // Un componente con parametro simple recibe el objeto de props, no el valor.
+  // Si el cuerpo lo usa como si fuera el valor, revienta en runtime y
+  // TypeScript no lo ve porque todo va con `any`. Asi se cazo el fallo de
+  // "Alumnos": Habit leia r.s sobre {r: fila} y reventaba al abrir la pantalla.
+  console.log('\n== props de componentes ==')
+  const fs = require('node:fs')
+  const buff = []
+  const recorrer = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name)
+      if (e.isDirectory()) recorrer(p)
+      else if (e.name.endsWith('.tsx')) buff.push(p)
+    }
+  }
+  recorrer(path.join(__dirname, '..', 'app'))
+  check('hay pantallas tsx que auditar', buff.length > 0)
+
+  const descuadres = []
+  for (const archivo of buff) {
+    const src = fs.readFileSync(archivo, 'utf8')
+    for (const m of src.matchAll(/const\s+([A-Z]\w*)\s*=\s*\(([^)]*)\)\s*=>/g)) {
+      const params = m[2].trim()
+      if (!params || params.startsWith('{') || params.startsWith('...')) continue
+      const param = params.replace(/:.*$/, '').trim()
+      const usos = [...src.matchAll(new RegExp(`<${m[1]}\\s([^>]*?)/?>`, 'g'))].map((u) => u[1])
+      if (!usos.length) continue
+      const props = new Set()
+      for (const u of usos) for (const p of u.matchAll(/(?:^|\s)([A-Za-z_]\w*)\s*=/g)) props.add(p[1])
+      const cuerpo = src.slice(m.index, m.index + 1500)
+      const leidas = [...new Set([...cuerpo.matchAll(new RegExp(`\\b${param}\\.(\\w+)`, 'g'))].map((x) => x[1]))]
+      const malas = leidas.filter((x) => !props.has(x))
+      if (malas.length) {
+        descuadres.push(`${path.basename(archivo)}: <${m[1]}> (${param}) lee ${param}.${malas.join(`, ${param}.`)} pero recibe {${[...props].join(', ')}}`)
+      }
+    }
+  }
+  check('ningun componente confunde el parametro con el valor del prop', descuadres.length === 0, descuadres.join(' | '))
+
   // limpieza
   await cleanupTestUsers(
     [],
