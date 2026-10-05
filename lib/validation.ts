@@ -16,3 +16,22 @@ export function validatePassword(password: unknown): string | null {
   if (password.length > 200) return 'La contrasena es demasiado larga'
   return null
 }
+
+/**
+ * El PIN es el unico acceso, asi que la forma tiene que ser estricta: solo
+ * digitos, de 4 a 8. Se descartan espacios y guiones para que "4 8 2 1" y
+ * "4821" sean el mismo PIN.
+ */
+const PIN_RE = /^\d{4,8}$/
+
+export function normalizePin(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  return value.replace(/\D/g, '')
+}
+
+export function validatePin(value: unknown): string | null {
+  const pin = normalizePin(value)
+  if (!pin) return 'Ingresa tu PIN'
+  if (!PIN_RE.test(pin)) return 'El PIN debe tener entre 4 y 8 digitos'
+  return null
+}

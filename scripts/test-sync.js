@@ -5,7 +5,7 @@
  * borrado logico y reconexion offline.
  */
 const BASE = process.env.BASE_URL || 'http://localhost:3111'
-const { Client } = require('pg')
+const { cleanupTestUsers } = require('./cleanup-test-users')
 
 let passed = 0
 let failed = 0
@@ -55,7 +55,8 @@ const find = (records, collection, id) =>
 
 async function main() {
   const email = `sync-test-${Date.now()}@padelcoach.test`
-  const password = 'contrasena-de-prueba-123'
+  const pin = String(Date.now()).slice(-8)
+  const otroPin = String((Number(pin) + 3) % 100000000).padStart(8, '0')
   const deviceA = makeDevice('PC')
   const deviceB = makeDevice('Movil')
   const deviceC = makeDevice('Otro usuario')
@@ -63,20 +64,17 @@ async function main() {
   console.log('\n== 1. Registro e inicio de sesion ==')
   const register = await deviceA.call('POST', '/api/auth/register', {
     email,
-    password,
+    pin,
     name: 'Probe',
   })
   check('registro crea la cuenta', register.status === 200 && !!register.body.user, JSON.stringify(register.body))
   const userId = register.body.user?.id
 
-  const login = await deviceB.call('POST', '/api/auth/login', { email, password })
+  const login = await deviceB.call('POST', '/api/auth/login', { pin })
   check('el movil inicia sesion con la misma cuenta', login.status === 200 && login.body.user?.id === userId)
 
-  const badPassword = await makeDevice('X').call('POST', '/api/auth/login', {
-    email,
-    password: 'incorrecta',
-  })
-  check('rechaza contrasena incorrecta', badPassword.status === 401)
+  const badPin = await makeDevice('X').call('POST', '/api/auth/login', { pin: otroPin })
+  check('rechaza un PIN incorrecto', badPin.status === 401)
 
   const anon = await fetch(`${BASE}/api/sync`).then((r) => r.status)
   check('la API de sync exige sesion', anon === 401, `status=${anon}`)
@@ -274,9 +272,10 @@ async function main() {
 
   console.log('\n== 8. Aislamiento entre cuentas ==')
   const otherEmail = `sync-otro-${Date.now()}@padelcoach.test`
+  const otherPin = String((Number(pin) + 5) % 100000000).padStart(8, '0')
   const otherReg = await deviceC.call('POST', '/api/auth/register', {
     email: otherEmail,
-    password,
+    pin: otherPin,
     name: 'Otro',
   })
   check('el segundo usuario se registra', otherReg.status === 200)
@@ -337,10 +336,7 @@ async function main() {
   check('tras salir, la API ya no responde', afterLogout.status === 401)
 
   // Limpieza
-  const client = new Client({ connectionString: process.env.DATABASE_URL })
-  await client.connect()
-  await client.query('delete from padelcoach.users where email_key = any($1)', [[email, otherEmail]])
-  await client.end()
+  await cleanupTestUsers([email, otherEmail])
 
   console.log(`\n================  ${passed} pruebas OK / ${failed} fallos  ================`)
   if (failures.length) {

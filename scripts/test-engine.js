@@ -5,6 +5,7 @@
  */
 const BASE = process.env.BASE_URL || 'http://localhost:3111'
 const path = require('node:path')
+const { cleanupTestUsers } = require('./cleanup-test-users')
 
 let passed = 0
 let failed = 0
@@ -86,13 +87,22 @@ function makeDevice(label) {
     },
     newEngine() {
       this.engine = new SyncEngine(device.userId, {
-        applyRemote: (records) => device.received.push(...records),
+        // Replica app/page.tsx: al aplicar datos remotos se suspende la
+        // deteccion de cambios locales y se reactiva al terminar. Si este
+        // simulador no lo hiciera, no detectaria la regresion que motivo esto.
+        applyRemote: (records) => {
+          const resume = device.engine.suspendDirty()
+          try {
+            device.received.push(...records)
+          } finally {
+            resume()
+          }
+        },
         onUnauthorized: () => check(`${label}: la API no pide re-login`, false),
         fetchImpl: (url, init) => device.clientFetch(url, init),
         // Cada dispositivo tiene su propio almacenamiento local.
         storage: device.storage,
       })
-      this.engine.setDirtyEnabled(true)
       return this.engine
     },
   }
@@ -115,27 +125,30 @@ async function settle(device, tries = 40) {
 
 /** Migra y espera a que la cola quede vacia. */
 async function boot(device, data) {
+  // Igual que app/page.tsx: la deteccion de cambios locales se activa una vez,
+  // despues de cargar los datos guardados y antes de migrar.
+  device.engine.setDirtyEnabled(true)
   await device.engine.migrate(data)
   await settle(device)
 }
 
 async function main() {
   const email = `engine-test-${Date.now()}@padelcoach.test`
-  const password = 'contrasena-de-prueba-123'
-  const { Client } = require('pg')
+  const pin = String(Date.now()).slice(-8)
+  const otroPin = String((Number(pin) + 5) % 100000000).padStart(8, '0')
 
   const pc = makeDevice('PC')
   const movil = makeDevice('Movil')
   const tablet = makeDevice('Tablet')
 
-  const registered = await pc.api('POST', '/api/auth/register', { email, password, name: 'Probe' })
+  const registered = await pc.api('POST', '/api/auth/register', { email, pin, name: 'Probe' })
   check('cuenta creada', registered.status === 200, JSON.stringify(registered.body))
   const userId = registered.body.user.id
   pc.userId = movil.userId = tablet.userId = userId
 
   // Cada dispositivo entra por su cuenta con su propia sesion.
   for (const device of [movil, tablet]) {
-    const login = await device.api('POST', '/api/auth/login', { email, password })
+    const login = await device.api('POST', '/api/auth/login', { pin })
     check(`${device.label} inicia sesion en su propio dispositivo`, login.status === 200, JSON.stringify(login.body))
   }
   check('navigator queda online', globalThis.navigator.onLine === true)
@@ -261,7 +274,7 @@ async function main() {
   console.log('\n== 9. Aislamiento del estado local entre cuentas ==')
   const otroCorreo = `engine-otro-${Date.now()}@padelcoach.test`
   const otro = makeDevice('Otro')
-  await otro.api('POST', '/api/auth/register', { email: otroCorreo, password, name: 'Otro' })
+  await otro.api('POST', '/api/auth/register', { email: otroCorreo, pin: otroPin, name: 'Otro' })
   otro.userId = (await otro.api('GET', '/api/auth/me')).body.user.id
   otro.newEngine()
   await boot(otro, { students: [], cycles: [], classes: [], recurrences: [], payments: [], profile: { name: 'Otro', club: 'Su club' } })
@@ -270,11 +283,34 @@ async function main() {
   const store = JSON.parse(globalThis.localStorage.getItem('padelpro-sync-v1') || '{"users":{}}')
   check('la cola local se guarda separada por cuenta', Object.keys(store.users).length <= 1, Object.keys(store.users).join(','))
 
+  console.log('\n== 10. Regresion: un dispositivo que ya descargo sigue pudiendo subir ==')
+  // Va al final porque crea alumnos y las secciones anteriores cuentan alumnos.
+  // La tablet se bajo todo en la migracion. Antes, aplicar esos datos remotos
+  // apagaba la deteccion de cambios locales para siempre y la tablet nunca mas
+  // subia nada: por eso el celular y la PC se separaban.
+  const altaTablet = { id: 't-9', name: 'Dora Tablet', phone: '999', level: 'Inicial', amount: 100, due: '2026-10-01', active: true }
+  tablet.engine.enqueueDiff('students', [], [altaTablet])
+  check('la tablet encola un alta nueva despues de descargar', tablet.engine.getState().pending === 1, `pendientes=${tablet.engine.getState().pending}`)
+  await settle(tablet)
+  const trasAltaTablet = await movil.api('GET', '/api/sync?since=' + encodeURIComponent(new Date(0).toISOString()))
+  check('el alta de la tablet llego a la nube', !!trasAltaTablet.body.records.find((r) => r.id === 't-9'), trasAltaTablet.body.records.map((r) => r.id).join(','))
+  const descargada = trasAltaTablet.body.records.find((r) => r.id === 'a-2')
+  check('el alumno descargado por la tablet existe en la nube', !!descargada, 'no se encontro students:a-2')
+  const edicionTablet = { ...descargada.data, name: 'Beto editado en la tablet' }
+  tablet.engine.enqueueDiff('students', [descargada.data], [edicionTablet])
+  check('la tablet encola una edicion sobre un registro descargado', tablet.engine.getState().pending === 1, `pendientes=${tablet.engine.getState().pending}`)
+  await settle(tablet)
+  const trasEdicion = await movil.api('GET', '/api/sync?since=' + encodeURIComponent(new Date(0).toISOString()))
+  check('la edicion sobre un registro descargado llego a la nube', trasEdicion.body.records.find((r) => r.id === 'a-2')?.data?.name === 'Beto editado en la tablet', trasEdicion.body.records.find((r) => r.id === 'a-2')?.data?.name)
+  check('la edicion de la tablet no genero conflictos', trasEdicion.body.conflicts.length === 0)
+  // La suspension de un pull no puede dejar la deteccion apagada.
+  await tablet.engine.run()
+  tablet.engine.enqueueDiff('students', [], [{ id: 't-10', name: 'Post pull', phone: '100', level: 'Inicial', amount: 100, due: '2026-10-01', active: true }])
+  check('un pull no deja la deteccion de cambios apagada', tablet.engine.getState().pending === 1, `pendientes=${tablet.engine.getState().pending}`)
+  await settle(tablet)
+
   // limpieza
-  const client = new Client({ connectionString: process.env.DATABASE_URL })
-  await client.connect()
-  await client.query('delete from padelcoach.users where email_key = any($1)', [[email, otroCorreo]])
-  await client.end()
+  await cleanupTestUsers([email, otroCorreo])
 
   console.log(`\n================  ${passed} pruebas OK / ${failed} fallos  ================`)
   if (failures.length) {

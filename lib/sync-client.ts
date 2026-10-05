@@ -105,6 +105,7 @@ export class SyncEngine {
   private ready = false
   private failures = 0
   private dirtyEnabled = false
+  private dirtySuspends = 0
   private stopped = false
   private applyRemote: (records: SyncRecord[]) => void
   private onUnauthorized: () => void
@@ -156,6 +157,28 @@ export class SyncEngine {
   /** Permite detectar cambios locales solo cuando la app ya esta hidratada. */
   setDirtyEnabled(enabled: boolean): void {
     this.dirtyEnabled = enabled
+  }
+
+  /**
+   * Silencia la deteccion de cambios locales mientras se aplican datos que
+   * vienen del servidor, y devuelve la funcion que la reactiva. El contador
+   * garantiza que la reactivacion sea pareja: aunque se olvide llamar al
+   * liberador, los cambios locales siguen detectandose en la proxima
+   * actualizacion de estado.
+   */
+  suspendDirty(): () => void {
+    this.dirtySuspends += 1
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      this.dirtySuspends = Math.max(0, this.dirtySuspends - 1)
+    }
+  }
+
+  /** Los cambios locales se encolan solo si la app esta hidratada y no hay un pull en curso. */
+  private get dirtyActive(): boolean {
+    return this.dirtyEnabled && this.dirtySuspends === 0
   }
 
   start(): void {
@@ -228,7 +251,7 @@ export class SyncEngine {
   }
 
   enqueueProfile(previous: unknown, next: unknown): void {
-    if (!this.dirtyEnabled) return
+    if (!this.dirtyActive) return
     if (stableStringify(previous) === stableStringify(next)) return
     const key = recordKey('settings', SETTINGS_PROFILE_ID)
     this.setPending(key, {
@@ -241,7 +264,7 @@ export class SyncEngine {
   }
 
   enqueueDiff(collection: SyncCollection, previousItems: unknown[], nextItems: unknown[]): void {
-    if (!this.dirtyEnabled) return
+    if (!this.dirtyActive) return
     const previousById = new Map<string, unknown>()
     for (const item of previousItems) {
       const id = (item as { id?: unknown })?.id

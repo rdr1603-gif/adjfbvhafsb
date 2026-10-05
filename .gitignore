@@ -29,5 +29,6 @@ pnpm-debug.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# deploy.tmp-test
-.vercel
+# build de pruebas
+.tmp-test/
+.tmp-sched/

@@ -1,43 +1,63 @@
-import { createUser, ensureProfile, findUserByEmail } from '@/lib/users'
-import { clearAttempts, tooManyAttempts } from '@/lib/rate-limit'
-import { hashPassword, startSession } from '@/lib/session'
-import { validateEmail, validatePassword } from '@/lib/validation'
+import { clearAttempts, clientIp, tooManyAttempts } from '@/lib/rate-limit'
+import { hashPin, pinLookupKey, startSession } from '@/lib/session'
+import { createUser, ensureProfile, findUserByPinKey } from '@/lib/users'
+import { normalizePin, validateEmail, validatePin } from '@/lib/validation'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
+const VENTANA = 60 * 60 * 1000
+
 export async function POST(request: Request) {
-  let body: { email?: unknown; password?: unknown; name?: unknown }
+  // 30 por hora y por IP: frena la fabricacion masiva de cuentas sin castigar a
+  // unasalida de escuela u oficina, donde detras de una sola IP hay mucha gente.
+  if (await tooManyAttempts(`register:ip:${clientIp(request)}`, 30, VENTANA)) {
+    return Response.json(
+      { error: 'Demasiadas cuentas creadas desde aqui. Intenta mas tarde.' },
+      { status: 429 },
+    )
+  }
+
+  let body: { pin?: unknown; name?: unknown; email?: unknown }
   try {
     body = await request.json()
   } catch {
     return Response.json({ error: 'Solicitud invalida' }, { status: 400 })
   }
 
-  const email = typeof body.email === 'string' ? body.email.trim() : ''
-  const name = typeof body.name === 'string' ? body.name.trim().slice(0, 80) : ''
-  const emailError = validateEmail(email)
-  const passwordError = validatePassword(body.password)
-  if (emailError) return Response.json({ error: emailError }, { status: 400 })
-  if (passwordError) return Response.json({ error: passwordError }, { status: 400 })
+  const pin = normalizePin(body.pin)
+  const pinError = validatePin(pin)
+  if (pinError) return Response.json({ error: pinError }, { status: 400 })
 
-  const key = `register:${email.toLowerCase()}`
-  if (tooManyAttempts(key, 5, 60 * 60 * 1000)) {
+  // El correo ya no es parte del acceso. Sigue aceptandose como dato opcional
+  // para las pruebas y para no perder el registro de cuentas ya creadas.
+  const email = typeof body.email === 'string' ? body.email.trim() : ''
+  if (email) {
+    const emailError = validateEmail(email)
+    if (emailError) return Response.json({ error: emailError }, { status: 400 })
+  }
+  const name = typeof body.name === 'string' ? body.name.trim().slice(0, 80) : ''
+
+  const pinKey = pinLookupKey(pin)
+  if (await tooManyAttempts(`register:pin:${pinKey}`, 5, VENTANA)) {
     return Response.json(
-      { error: 'Demasiados registros desde este correo. Intenta mas tarde.' },
+      { error: 'Ese PIN ya se uso demasiadas veces. Prueba con otro.' },
       { status: 429 },
     )
   }
 
-  const existing = await findUserByEmail(email)
-  if (existing) {
-    return Response.json({ error: 'Ya existe una cuenta con ese correo' }, { status: 409 })
+  if (await findUserByPinKey(pinKey)) {
+    return Response.json({ error: 'Ese PIN ya esta en uso' }, { status: 409 })
   }
 
-  const user = await createUser(email, name || email.split('@')[0], hashPassword(String(body.password)))
+  const user = await createUser({ name: name || 'Profe', pinKey, pinHash: hashPin(pin), email })
+  // null = otra cuenta se adelanto entre el find y el insert.
+  if (!user) {
+    return Response.json({ error: 'Ese PIN ya esta en uso' }, { status: 409 })
+  }
   await ensureProfile(user.id)
   await startSession(user.id)
-  clearAttempts(key)
+  await clearAttempts(`register:pin:${pinKey}`)
 
-  return Response.json({ user: { id: user.id, email: user.email, name: user.name } })
+  return Response.json({ user: { id: user.id, name: user.name } })
 }

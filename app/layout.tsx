@@ -27,7 +27,10 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  colorScheme: 'light dark',
+  // Solo tenemos tema claro. Declarar "light dark" hacia que el navegador
+  // oscurezca los campos en dispositivos en modo oscuro y, como los inputs
+  // son transparentes sobre fondo blanco, el texto queda blanco sobre blanco.
+  colorScheme: 'light',
   themeColor: [
     { media: '(prefers-color-scheme: light)', color: 'white' },
     { media: '(prefers-color-scheme: dark)', color: 'black' },

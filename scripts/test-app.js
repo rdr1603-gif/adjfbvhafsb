@@ -5,6 +5,7 @@
  */
 const BASE = process.env.BASE_URL || 'http://localhost:3111'
 const path = require('node:path')
+const { cleanupTestUsers } = require('./cleanup-test-users')
 
 let passed = 0
 let failed = 0
@@ -52,6 +53,17 @@ async function main() {
   check('la app no manda datos de la nube en el HTML inicial', !homeHtml.includes('padelpro-sync-v1'))
   check('la app verifica la sesion antes de mostrar datos', homeHtml.includes('Verificando'))
 
+  // La app solo tiene tema claro. Si el layout declara "light dark", el
+  // navegador oscurece los campos en las tablets en modo oscuro y el texto
+  // queda blanco sobre el fondo blanco de los inputs.
+  const colorSchemeMeta =
+    (loginHtml.match(/<meta[^>]*name="color-scheme"[^>]*>/i) || [''])[0]
+  check(
+    'el layout declara color-scheme light (no light dark)',
+    /content="light"/i.test(colorSchemeMeta) && !/light\s+dark/i.test(colorSchemeMeta),
+    `meta encontrada: ${colorSchemeMeta || 'ninguna'}`,
+  )
+
   console.log('\n== 2. Sin sesion, la API no entrega datos ==')
   for (const [method, pathUrl] of [['GET', '/api/sync'], ['POST', '/api/sync']]) {
     const res = await fetch(BASE + pathUrl, {
@@ -73,7 +85,7 @@ async function main() {
     const reg = await fetch(`${BASE}/api/auth/register`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email: `tamper-${Date.now()}@padelcoach.test`, password: 'contrasena-larga-123', name: 'T' }),
+      body: JSON.stringify({ email: `tamper-${Date.now()}@padelcoach.test`, pin: String(Date.now()).slice(-8), name: 'T' }),
     })
     const cookie = (reg.headers.getSetCookie?.() || []).map((c) => c.split(';')[0]).join('; ')
     const [, payload] = cookie.split('padelcoach_session=')
@@ -86,6 +98,11 @@ async function main() {
 
   console.log('\n== 4. Validacion en el servidor (no se confia en el cliente) ==')
   const email = `app-${Date.now()}@padelcoach.test`
+  // PIN de 8 digitos derivado del reloj: dos corridas no chocan entre si.
+  const pin = String(Date.now()).slice(-8)
+  const pinCorto = '123'
+  const pinLargo = '123456789'
+  const pinLibre = String((Number(pin) + 7) % 100000000).padStart(8, '0')
   const jar = new Map()
   const jarFetch = async (url, init = {}) => {
     const headers = { ...(init.headers || {}) }
@@ -101,24 +118,44 @@ async function main() {
   }
   const corta = await jarFetch('/api/auth/register', {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email, password: '123', name: 'x' }),
+    body: JSON.stringify({ email, pin: pinCorto, name: 'x' }),
   })
-  check('rechaza contrasenas de menos de 8 caracteres', corta.status === 400)
+  check('rechaza PIN de menos de 4 digitos', corta.status === 400, `status=${corta.status}`)
+  const largo = await jarFetch('/api/auth/register', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email, pin: pinLargo, name: 'x' }),
+  })
+  check('rechaza PIN de mas de 8 digitos', largo.status === 400, `status=${largo.status}`)
   const mailMalo = await jarFetch('/api/auth/register', {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email: 'no-es-correo', password: 'contrasena-larga-123' }),
+    body: JSON.stringify({ email: 'no-es-correo', pin: pinLibre }),
   })
-  check('rechaza correos invalidos', mailMalo.status === 400)
+  check('rechaza correos invalidos', mailMalo.status === 400, `status=${mailMalo.status}`)
   const ok = await jarFetch('/api/auth/register', {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email, password: 'contrasena-larga-123', name: 'Profe' }),
+    body: JSON.stringify({ email, pin, name: 'Profe' }),
   })
-  check('acepta una cuenta valida', ok.status === 200)
+  check('acepta una cuenta valida', ok.status === 200, `status=${ok.status}`)
   const dup = await jarFetch('/api/auth/register', {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email, password: 'contrasena-larga-123' }),
+    body: JSON.stringify({ email: `otro-${Date.now()}@padelcoach.test`, pin }),
   })
-  check('no permite dos cuentas con el mismo correo', dup.status === 409, `status=${dup.status}`)
+  check('no permite dos cuentas con el mismo PIN', dup.status === 409, `status=${dup.status}`)
+  const malPin = await jarFetch('/api/auth/login', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ pin: pinLibre }),
+  })
+  check('rechaza un PIN incorrecto', malPin.status === 401, `status=${malPin.status}`)
+  const cambia = await jarFetch('/api/auth/pin', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ pin, nuevo: pinLibre }),
+  })
+  check('cambia el PIN con la sesion activa', cambia.status === 200, `status=${cambia.status}`)
+  const pinViejo = await jarFetch('/api/auth/login', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ pin }),
+  })
+  check('el PIN viejo deja de servir', pinViejo.status === 401, `status=${pinViejo.status}`)
 
   const colInvalida = await (await jarFetch('/api/sync', {
     method: 'POST', headers: { 'content-type': 'application/json' },
@@ -182,14 +219,71 @@ async function main() {
   const generadas = semana.filter((d) => rec.data.days.includes(new Date(`${d}T12:00:00`).getDay() || 7) && d >= rec.data.start)
   check('la semana genera las clases del alumno', generadas.length === 2, generadas.join(','))
 
+  // Las clases ahora son registros reales (requisito 2), no se arman al
+  // renderizar. Esta seccion prueba que viajan a la nube con todos sus campos y
+  // que un segundo dispositivo las recibe igual, sin duplicar.
+  console.log('\n== 7. Las clases materializadas viajan a la nube y vuelven intactas ==')
+  const base = '2026-10-06'
+  const clasesReales = [
+    {
+      id: `rec-1::${base}`, studentId: 'nuevo-1', student: 'Carla Ruiz', date: base,
+      time: '18:00', court: 'Cancha 1', duration: 60, type: 'recurrente', status: 'Realizada',
+      recurrenceId: 'rec-1', cycleId: 'ciclo-1', completedAt: base, note: 'llego tarde',
+    },
+    {
+      id: `rec-1::${iso(addDays(hoy, 2))}`, studentId: 'nuevo-1', student: 'Carla Ruiz',
+      date: iso(addDays(hoy, 2)), time: '18:00', court: 'Cancha 1', duration: 60,
+      type: 'recurrente', status: 'Recuperada', recurrenceId: undefined, cycleId: 'ciclo-1',
+      completedAt: base, note: 'repuso la del 06', recoveredFrom: `rec-1::${base}`,
+    },
+  ]
+  engine.enqueueDiff('classes', [], clasesReales)
+  for (let i = 0; i < 12; i += 1) {
+    await engine.run()
+    await sleep(90)
+    if (engine.getState().pending === 0) break
+  }
+  check('las clases reales se suben a la nube', engine.getState().pending === 0, engine.getState().message || '')
+
+  const conClases = await (await jarFetch('/api/sync?since=' + encodeURIComponent(new Date(0).toISOString()))).json()
+  const enApi = conClases.records.filter((r) => r.collection === 'classes' && !r.deletedAt)
+  check('la nube guarda las dos clases', enApi.length === 2, enApi.map((r) => r.id).join(','))
+  const realizada = enApi.find((r) => r.id === clasesReales[0].id)
+  const recuperada = enApi.find((r) => r.id === clasesReales[1].id)
+  check('el estado Realizada sobrevive', realizada?.data?.status === 'Realizada')
+  check('la nota sobrevive', realizada?.data?.note === 'llego tarde')
+  check('el vinculo con la mensualidad sobrevive', realizada?.data?.cycleId === 'ciclo-1')
+  check('el estado Recuperada sobrevive', recuperada?.data?.status === 'Recuperada')
+  check('el vinculo de recuperacion sobrevive', recuperada?.data?.recoveredFrom === clasesReales[0].id)
+  check('una clase recuperada no queda atada a la regla', recuperada?.data?.recurrenceId === undefined || recuperada?.data?.recurrenceId === null)
+
+  // Segundo dispositivo: mismo id, mismos datos, sin duplicados.
+  const recibidas2 = []
+  const otro = new SyncEngine(device.userId, {
+    applyRemote: (records) => recibidas2.push(...records),
+    onUnauthorized: () => check('la sesion sigue viva', false),
+    fetchImpl: (url, init) => jarFetch(url, init),
+    storage: makeStorage(),
+  })
+  otro.setDirtyEnabled(true)
+  await otro.migrate({ students: [], cycles: [], classes: [], recurrences: [], payments: [], profile: { name: '', club: '', phone: '', fontSize: 'normal', theme: 'actual' } })
+  for (let i = 0; i < 8; i += 1) {
+    await otro.run()
+    await sleep(90)
+    if (otro.getState().pending === 0) break
+  }
+  // El motor no cachea los datos: los entrega por applyRemote.
+  const recibidas = recibidas2.filter((r) => r.collection === 'classes' && !r.deletedAt)
+  check('el segundo dispositivo recibe las clases', recibidas.length === 2, recibidas.map((c) => c.id).join(','))
+  check('los ids llegan iguales', recibidas.map((c) => String(c.id)).sort().join(',') === clasesReales.map((c) => c.id).sort().join(','))
+  check('la recuperacion llega completa en el otro dispositivo', recibidas.find((c) => String(c.id) === clasesReales[1].id)?.data?.status === 'Recuperada')
+  check('el vinculo de recuperacion tambien llega', recibidas.find((c) => String(c.id) === clasesReales[1].id)?.data?.recoveredFrom === clasesReales[0].id)
+
   // limpieza
-  const { Client } = require('pg')
-  const client = new Client({ connectionString: process.env.DATABASE_URL })
-  await client.connect()
-  await client.query("delete from padelcoach.users where email_key like 'app-%' or email_key like 'tamper-%' or email_key like 'sync-test-%' or email_key like 'sync-otro-%' or email_key like 'engine-test-%' or email_key like 'engine-otro-%' or email_key like 'dbg-%'")
-  const quedan = await client.query('select count(*)::int as n from padelcoach.users')
-  await client.end()
-  console.log(`  (usuarios de prueba restantes en la base: ${quedan.rows[0].n})`)
+  await cleanupTestUsers(
+    [],
+    "email_key like 'app-%' or email_key like 'tamper-%' or email_key like 'sync-test-%' or email_key like 'sync-otro-%' or email_key like 'engine-test-%' or email_key like 'engine-otro-%' or email_key like 'dbg-%' or email_key like 'audit-%' or email_key like 'fuga-%'",
+  )
 
   console.log(`\n================  ${passed} pruebas OK / ${failed} fallos  ================`)
   if (failures.length) {

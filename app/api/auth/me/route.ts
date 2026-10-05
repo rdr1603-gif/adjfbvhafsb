@@ -9,5 +9,5 @@ export async function GET() {
   if (!userId) return Response.json({ user: null }, { status: 401 })
   const user = await findUserById(userId)
   if (!user) return Response.json({ user: null }, { status: 401 })
-  return Response.json({ user: { id: user.id, email: user.email, name: user.name } })
+  return Response.json({ user: { id: user.id, name: user.name } })
 }

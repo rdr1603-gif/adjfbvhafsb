@@ -2,15 +2,14 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Check, Cloud, CloudOff, Lock, Mail, User } from 'lucide-react'
+import { Check, Cloud, CloudOff, Lock, User } from 'lucide-react'
 
 type Mode = 'login' | 'register'
 
 export default function LoginPage() {
   const router = useRouter()
   const [mode, setMode] = useState<Mode>('login')
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
+  const [pin, setPin] = useState('')
   const [name, setName] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -40,7 +39,7 @@ export default function LoginPage() {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(mode === 'login' ? { email, password } : { email, password, name }),
+        body: JSON.stringify(mode === 'login' ? { pin } : { pin, name }),
       })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) {
@@ -85,8 +84,8 @@ export default function LoginPage() {
           <h2>{mode === 'login' ? 'Entrar a tu cuenta' : 'Crear tu cuenta'}</h2>
           <p>
             {mode === 'login'
-              ? 'Tus alumnos, clases y pagos se sincronizan entre el celular y la computadora.'
-              : 'Registrate una vez y accede a los mismos datos desde cualquier dispositivo.'}
+              ? 'Escribe tu PIN para ver tus alumnos, clases y pagos.'
+              : 'Elegi un PIN de 4 a 8 digitos. Es lo unico que necesitás para entrar.'}
           </p>
         </div>
 
@@ -106,31 +105,19 @@ export default function LoginPage() {
             </label>
           )}
           <label>
-            Correo electronico
-            <span className="auth-input">
-              <Mail />
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                autoComplete="email"
-                required
-                placeholder="profesor@correo.com"
-              />
-            </span>
-          </label>
-          <label>
-            Contrasena
+            Tu PIN
             <span className="auth-input">
               <Lock />
               <input
                 type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                inputMode="numeric"
+                pattern="[0-9]*"
+                autoComplete="off"
+                value={pin}
+                onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 8))}
                 required
-                minLength={8}
-                placeholder="Minimo 8 caracteres"
+                maxLength={8}
+                placeholder="4 a 8 digitos"
               />
             </span>
           </label>

@@ -20,6 +20,8 @@ const MAX_CHANGES_PER_REQUEST = 2000
 const MAX_RECORD_BYTES = 200_000
 /** Margen de solapamiento del cursor: evita perder escrituras concurrentes. */
 const CURSOR_OVERLAP_MS = 2000
+/** Maximo de registros por respuesta. */
+const PULL_LIMIT = 20000
 /** Tolerancia al comparar versiones (redondeo de milisegundos). */
 const VERSION_TOLERANCE_MS = 1
 
@@ -91,7 +93,7 @@ async function pullRecords(
   userId: string,
   since: string | null,
   until: Date,
-): Promise<SyncRecord[]> {
+): Promise<{ records: SyncRecord[]; truncated: boolean }> {
   const { rows } = await client.query(
     `select collection, id, data, updated_at, deleted_at
        from padelcoach.records
@@ -99,16 +101,17 @@ async function pullRecords(
         and updated_at > $2
         and updated_at <= $3
       order by updated_at asc, collection asc, id asc
-      limit 20000`,
+      limit ${PULL_LIMIT}`,
     [userId, since ? new Date(since) : new Date(0), until],
   )
-  return rows.map((row) => ({
+  const records: SyncRecord[] = rows.map((row) => ({
     collection: row.collection as SyncCollection,
     id: row.id,
     data: row.data,
     updatedAt: new Date(row.updated_at).toISOString(),
     deletedAt: row.deleted_at ? new Date(row.deleted_at).toISOString() : null,
   }))
+  return { records, truncated: records.length >= PULL_LIMIT }
 }
 
 async function applyChange(
@@ -127,8 +130,8 @@ async function applyChange(
 
   if (!rows.length) {
     const inserted = await client.query(
-      `insert into padelcoach.records (user_id, collection, id, data, deleted_at)
-       values ($1, $2, $3, $4::jsonb, $5)
+      `insert into padelcoach.records (user_id, collection, id, data, deleted_at, updated_at)
+       values ($1, $2, $3, $4::jsonb, $5, clock_timestamp())
        returning updated_at`,
       [userId, change.collection, change.id, payload, change.deletedAt],
     )
@@ -178,6 +181,38 @@ async function applyChange(
   }
 }
 
+/**
+ * Cursor para la proxima sincronizacion. Si la respuesta quedo truncada por el
+ * limite de registros, el cursor se queda en el ultimo registro devuelto: si
+ * avanzara hasta la marca de agua, los registros que no entraron en la respuesta
+ * se perderian para siempre.
+ *
+ * El cursor nunca puede quedar por delante de un registro que esta misma
+ * peticion acaba de escribir. updated_at usa clock_timestamp(), asi que en una
+ * transaccion larga puede quedar bastante antes que la marca de agua; si el
+ * cursor la sobrepasara, ningun pull posterior volveria a traer ese registro y
+ * el otro dispositivo no se enteraria nunca del cambio.
+ */
+function nextCursor(
+  records: SyncRecord[],
+  truncated: boolean,
+  since: string | null,
+  watermark: Date,
+  applied: SyncApplied[],
+): string {
+  const floor = since ? Date.parse(since) : 0
+  if (truncated && records.length) {
+    const last = Date.parse(records[records.length - 1].updatedAt)
+    return new Date(Math.max(floor, last)).toISOString()
+  }
+  let candidate = watermark.getTime() - CURSOR_OVERLAP_MS
+  for (const item of applied) {
+    const ms = Date.parse(item.updatedAt)
+    if (ms < candidate) candidate = ms
+  }
+  return new Date(Math.max(floor, candidate)).toISOString()
+}
+
 async function runSync(userId: string, since: string | null, rawChanges: unknown) {
   const { changes, rejected } = sanitizeChanges(rawChanges)
   return withTransaction(async (client) => {
@@ -206,9 +241,9 @@ async function runSync(userId: string, since: string | null, rawChanges: unknown
     }
 
     const watermark = await readWatermark(client)
-    const records = await pullRecords(client, userId, since, watermark)
+    const { records, truncated } = await pullRecords(client, userId, since, watermark)
     const response: SyncResponse & { rejected: number } = {
-      cursor: new Date(watermark.getTime() - CURSOR_OVERLAP_MS).toISOString(),
+      cursor: nextCursor(records, truncated, since, watermark, applied),
       applied,
       conflicts,
       records,

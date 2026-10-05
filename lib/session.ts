@@ -32,6 +32,27 @@ export function verifyPassword(plain: string, stored: string): boolean {
   return timingSafeEqual(candidate, expected)
 }
 
+/**
+ * Clave de busqueda determinista del PIN, para localizar la cuenta con un
+ * indice sin guardar el PIN en claro. Va con HMAC y no con un hash simple a
+ * proposito: con 4-8 digitos, un sha256 sin clave se revierte por fuerza bruta
+ * en microsegundos. Con HMAC, un volcado de la base no permite deducir el PIN.
+ * Se deriva de SESSION_SECRET, igual que la firma de sesion.
+ */
+export function pinLookupKey(pin: string): string {
+  return createHmac('sha256', secret()).update(`pin:${pin}`).digest('base64url')
+}
+
+/** El PIN se guarda con scrypt: mismo formato que la contrasena, sal propia. */
+export function hashPin(pin: string): string {
+  return hashPassword(pin)
+}
+
+export function verifyPin(pin: string, stored?: string | null): boolean {
+  if (!stored) return false
+  return verifyPassword(pin, stored)
+}
+
 function sign(payload: string): string {
   return createHmac('sha256', secret()).update(payload).digest('base64url')
 }

@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "db:migrate": "node scripts/migrate-db.js",
     "test:build": "tsc lib/sync-client.ts --outDir .tmp-test --module commonjs --target es2022 --moduleResolution node --skipLibCheck",
-    "test": "npm run test:build && node scripts/test-sync.js && node scripts/test-engine.js && node scripts/test-app.js"
+    "test:schedule:build": "tsc lib/schedule.ts scripts/test-schedule.ts --outDir .tmp-sched --module commonjs --target es2022 --moduleResolution node --skipLibCheck",
+    "test:schedule": "npm run test:schedule:build && node .tmp-sched/scripts/test-schedule.js",
+    "test": "npm run test:build && npm run test:schedule && node scripts/test-sync.js && node scripts/test-engine.js && node scripts/test-app.js"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
