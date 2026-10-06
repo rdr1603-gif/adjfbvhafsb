@@ -317,6 +317,32 @@ async function main() {
   }
   check('ningun componente confunde el parametro con el valor del prop', descuadres.length === 0, descuadres.join(' | '))
 
+  // El campo de monto no debe despedazar el importe: valor digitado 170000 con
+  // punto de miles ("170.000") tenia que guardar 170000, no 170. Se extrae la
+  // funcion real del codigo (transpilandola con TypeScript) y se prueba.
+  console.log('\n== parseo de montos ==')
+  const ts = require('typescript')
+  const srcPage = fs.readFileSync(path.join(__dirname, '..', 'app', 'page.tsx'), 'utf8')
+  const srcJs = ts.transpileModule(srcPage, { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText
+  const iniParse = srcJs.indexOf('const parseAmount')
+  check('parseAmount existe en el codigo', iniParse >= 0)
+  if (iniParse >= 0) {
+    const chunk = srcJs.slice(srcJs.indexOf('=', iniParse) + 1, srcJs.indexOf('\nconst ', iniParse))
+    // eslint-disable-next-line no-eval
+    const parseAmount = eval('(' + chunk.trim().replace(/;+$/, '') + ')')
+    const casosMontos = [
+      ['170000', 170000], ['170.000', 170000], ['170,000', 170000], ['1.700.000', 1700000],
+      ['1.700,50', 1700.5], ['170,50', 170.5], ['0170000', 170000], ['', 0], [null, 0],
+      [' $ 170.000 ', 170000], ['-20', -20],
+    ]
+    for (const [inp, esp] of casosMontos) {
+      check(`parseAmount(${JSON.stringify(inp)}) = ${esp}`, Math.abs(parseAmount(inp) - esp) < 1e-6, JSON.stringify(parseAmount(inp)))
+    }
+  }
+  check('los campos de monto usan MoneyField', /MoneyField label="Importe mensual"/.test(srcPage) && /MoneyField label="Monto mensual"/.test(srcPage) && /MoneyField label="Importe"/.test(srcPage) && /MoneyField label="Pago recibido/.test(srcPage))
+  check('MoneyField es texto numerico', /type="text"/.test(srcPage) && /inputMode="numeric"/.test(srcPage))
+  check('los tres guardados usan parseAmount', (srcPage.match(/parseAmount\(f\.get\('amount'\)\)/g) || []).length === 3 && /received:parseAmount\(f\.get\('received'\)\)/.test(srcPage))
+
   // limpieza
   await cleanupTestUsers(
     [],
