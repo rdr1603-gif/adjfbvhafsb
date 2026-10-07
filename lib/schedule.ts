@@ -414,3 +414,355 @@ export function reassignStudent(
 ): ClassItem {
   return { ...item, studentId, student: studentName }
 }
+
+// --------------------------------------------------------------------------
+// Calendario: etiquetas, celdas y navegacion (sin depender de React).
+// --------------------------------------------------------------------------
+
+/** Nombres completos de mes en español, indice 0 = enero. */
+export const MONTHS_ES = [
+  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
+]
+export const MONTHS_ES_SHORT = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+
+/** Encabezado de cada columna del calendario semanal: LUN, MAR, ... */
+export const DAY_HEAD = ['LUN', 'MAR', 'MIE', 'JUE', 'VIE', 'SAB', 'DOM']
+
+/** Franjas del calendario y del detalle del dia: 06:00 a 24:00. */
+export const GRID_TIMES = Array.from({ length: 19 }, (_, i) => `${String(6 + i).padStart(2, '0')}:00`)
+
+/**
+ * Rango de la semana en palabras: "6 — 12 de octubre de 2026".
+ * Si cruza de mes o de año, ambos extremos llevan su mes/año.
+ */
+export function weekRangeLabel(days: string[]): string {
+  if (!days.length) return ''
+  const a = date(days[0])
+  const b = date(days[days.length - 1])
+  const month = (d: Date) => MONTHS_ES[d.getMonth()].toLowerCase()
+  if (a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth()) {
+    return `${a.getDate()} — ${b.getDate()} de ${month(a)} de ${a.getFullYear()}`
+  }
+  if (a.getFullYear() === b.getFullYear()) {
+    return `${a.getDate()} de ${month(a)} — ${b.getDate()} de ${month(b)} de ${a.getFullYear()}`
+  }
+  return `${a.getDate()} de ${month(a)} de ${a.getFullYear()} — ${b.getDate()} de ${month(b)} de ${b.getFullYear()}`
+}
+
+/** "LUN 06"; si el dia cae en otro mes que el inicio de semana, agrega "OCT". */
+export function dayHeadLabel(day: string, weekStart: string): string {
+  const d = date(day)
+  const base = date(weekStart)
+  const wd = d.getDay() || 7
+  const dd = String(d.getDate()).padStart(2, '0')
+  const sameMonth = d.getFullYear() === base.getFullYear() && d.getMonth() === base.getMonth()
+  return sameMonth ? `${DAY_HEAD[wd - 1]} ${dd}` : `${DAY_HEAD[wd - 1]} ${dd} ${MONTHS_ES_SHORT[d.getMonth()].toUpperCase()}`
+}
+
+/** "Octubre 2026" (month es 0-based). */
+export const monthTitle = (year: number, month: number) => `${MONTHS_ES[month]} ${year}`
+
+/** Desplaza un mes calendario respetando el cambio de año. */
+export function shiftMonth(year: number, month: number, delta: number): { year: number; month: number } {
+  const total = year * 12 + month + delta
+  return { year: Math.floor(total / 12), month: ((total % 12) + 12) % 12 }
+}
+
+/**
+ * Celdas del mes para el calendario mensual, arrancando el lunes.
+ * Devuelve 5 o 6 semanas completas (35 o 42 dias) en ISO.
+ */
+export function monthCells(year: number, month: number): string[] {
+  const first = new Date(year, month, 1, 12)
+  const lead = (first.getDay() || 7) - 1
+  const daysInMonth = new Date(year, month + 1, 0, 12).getDate()
+  const rows = Math.ceil((lead + daysInMonth) / 7)
+  const start = addDays(first, -lead)
+  return Array.from({ length: rows * 7 }, (_, i) => iso(addDays(start, i)))
+}
+
+/** Cuantas semanas se movio `day` respecto de la semana que contiene `today`. */
+export function weekOffsetFor(day: string, today: string): number {
+  const ws = (s: string) => date(startOfWeek(0, s))
+  return Math.round((ws(day).getTime() - ws(today).getTime()) / 604800000)
+}
+
+/** Mes de una fecha ISO. */
+export function monthOf(day: string): { year: number; month: number } {
+  const d = date(day)
+  return { year: d.getFullYear(), month: d.getMonth() }
+}
+
+/** True si la semana dada pisa el mes visible (para mantener sincronizado el mensual). */
+export function monthContainsWeek(year: number, month: number, days: string[]): boolean {
+  return days.some((d) => {
+    const x = date(d)
+    return x.getFullYear() === year && x.getMonth() === month
+  })
+}
+
+// --------------------------------------------------------------------------
+// Horario por dia del alumno (requisito 21).
+// --------------------------------------------------------------------------
+
+export type TrainingSlot = { day: number; time: string }
+
+/** "1:08:00,3:07:00" -> [{day:1,time:'08:00'},{day:3,time:'07:00'}] */
+export function parseTrainingSchedule(value?: string): TrainingSlot[] {
+  if (!value) return []
+  const seen = new Set<string>()
+  const out: TrainingSlot[] = []
+  String(value)
+    .split(/[,;\s]+/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .forEach((part) => {
+      const m = part.match(/^([1-7])\s*[:=]\s*(\d{1,2}):(\d{2})$/)
+      if (!m) return
+      const day = Number(m[1])
+      const time = `${m[2].padStart(2, '0')}:${m[3]}`
+      const key = `${day}:${time}`
+      if (seen.has(key)) return
+      seen.add(key)
+      out.push({ day, time })
+    })
+  return out.sort((a, b) => a.day - b.day || a.time.localeCompare(b.time))
+}
+
+/** Inverso de parseTrainingSchedule, sin duplicados y ordenado. */
+export function formatTrainingSchedule(slots: TrainingSlot[]): string {
+  const seen = new Set<string>()
+  return slots
+    .filter((s) => s.day >= 1 && s.day <= 7 && /^\d{1,2}:\d{2}$/.test(s.time))
+    .map((s) => ({ day: s.day, time: s.time.length === 4 ? `0${s.time}` : s.time }))
+    .sort((a, b) => a.day - b.day || a.time.localeCompare(b.time))
+    .filter((s) => {
+      const key = `${s.day}:${s.time}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .map((s) => `${s.day}:${s.time}`)
+    .join(',')
+}
+
+/** Etiqueta legible del horario por dia: "Lun 08:00 · Mie 07:00". */
+export function trainingScheduleLabel(slots: TrainingSlot[]): string {
+  return [...slots]
+    .sort((a, b) => a.day - b.day || a.time.localeCompare(b.time))
+    .map((s) => `${DAY_SHORT[s.day - 1] || ''} ${s.time}`.trim())
+    .join(' · ')
+}
+
+export type StudentLike = {
+  trainingDays?: string
+  trainingTime?: string
+  /** Horario distinto por dia. Si esta vacio, se usa dias + trainingTime. */
+  trainingSchedule?: string
+}
+
+/**
+ * Horario efectivo del alumno. Prioriza el horario por dia; si no existe,
+ * reparte el `trainingTime` entre los dias seleccionados.
+ */
+export function studentSchedule(student: StudentLike | undefined): TrainingSlot[] {
+  if (!student) return []
+  const explicit = parseTrainingSchedule(student.trainingSchedule)
+  if (explicit.length) return explicit
+  const days = parseTrainingDays(student.trainingDays)
+  const time = String(student.trainingTime || '').trim()
+  if (!days.length || !/^\d{1,2}:\d{2}$/.test(time)) return []
+  const norm = time.length === 4 ? `0${time}` : time
+  return days.map((day) => ({ day, time: norm }))
+}
+
+/** Agrupa los dias que comparten horario: base para crear una regla por hora. */
+export function scheduleGroups(slots: TrainingSlot[]): { days: number[]; time: string }[] {
+  const byTime = new Map<string, Set<number>>()
+  slots.forEach((s) => {
+    if (!byTime.has(s.time)) byTime.set(s.time, new Set())
+    byTime.get(s.time)!.add(s.day)
+  })
+  return [...byTime.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([time, days]) => ({ time, days: [...days].sort((a, b) => a - b) }))
+}
+
+export type RuleSpec = {
+  days: number[]
+  time: string
+  duration?: number
+  court?: string
+  start: string
+}
+
+export type RuleSync = {
+  /** Reglas nuevas o actualizadas (todas activas). */
+  upserts: Recurrence[]
+  /** Ids de reglas que quedaron inactivas porque ya no tienen horario. */
+  removed: (number | string)[]
+}
+
+/**
+ * Ajusta las reglas de un alumno al horario deseado sin perder ids: la regla
+ * que cambia de hora/dias conserva su id (asi sus clases se mueven en vez de
+ * duplicarse) y solo se crea una nueva cuando hace falta otra franja horaria.
+ */
+export function reconcileRules(
+  current: Recurrence[],
+  studentId: number | string,
+  desired: RuleSpec[],
+  makeId: () => number | string,
+): RuleSync {
+  const active = current.filter((r) => r.active && sameId(r.studentId, studentId))
+  const used = new Set<number>()
+  const matches: (Recurrence | undefined)[] = desired.map(() => undefined)
+
+  desired.forEach((spec, i) => {
+    const idx = active.findIndex((r, j) => !used.has(j) && r.time === spec.time)
+    if (idx >= 0) {
+      used.add(idx)
+      matches[i] = active[idx]
+    }
+  })
+  desired.forEach((_, i) => {
+    if (matches[i]) return
+    const idx = active.findIndex((_, j) => !used.has(j))
+    if (idx >= 0) {
+      used.add(idx)
+      matches[i] = active[idx]
+    }
+  })
+
+  const upserts = desired.map((spec, i): Recurrence => {
+    const base = matches[i]
+    const start = base?.start && base.start < spec.start ? base.start : spec.start
+    return {
+      id: base ? base.id : makeId(),
+      studentId,
+      days: [...spec.days].sort((a, b) => a - b),
+      time: spec.time,
+      duration: spec.duration ?? base?.duration ?? 60,
+      court: spec.court ?? base?.court ?? 'Cancha 1',
+      start,
+      active: true,
+    }
+  })
+  const removed = active.filter((_, j) => !used.has(j)).map((r) => r.id)
+  return { upserts, removed }
+}
+
+// --------------------------------------------------------------------------
+// Detalle del dia y materializacion con presupuesto compartido.
+// --------------------------------------------------------------------------
+
+/**
+ * Horas configuradas para un dia de la semana: salen de las reglas activas y
+ * del horario de los alumnos. Es la disponibilidad real, no inventada.
+ */
+export function configuredTimesFor(
+  weekday: number,
+  students: StudentLike[],
+  recurrences: Recurrence[],
+): string[] {
+  const times = new Set<string>()
+  recurrences.forEach((r) => {
+    if (r.active && r.days.includes(weekday) && r.time) times.add(r.time)
+  })
+  students.forEach((s) => {
+    studentSchedule(s).forEach((slot) => {
+      if (slot.day === weekday && slot.time) times.add(slot.time)
+    })
+  })
+  return [...times].sort()
+}
+
+export type DaySlotState = 'ocupada' | 'disponible' | 'sin-horario'
+export type DaySlot = { time: string; state: DaySlotState; classes: ClassItem[] }
+
+/**
+ * Cronologia de un dia: cada franja 06:00–24:00 con las clases que caen en
+ * ella. Una franja sin clase pero con horario configurado queda "disponible";
+ * el resto es "sin-horario" (no se inventa disponibilidad).
+ */
+export function daySchedule(
+  day: string,
+  classes: ClassItem[],
+  configured: string[],
+  gridTimes: string[] = GRID_TIMES,
+): DaySlot[] {
+  const set = new Set(configured)
+  return gridTimes.map((time) => {
+    const mine = classes
+      .filter((c) => c.date === day && c.time === time)
+      .sort((a, b) => a.student.localeCompare(b.student))
+    return { time, state: mine.length ? 'ocupada' : set.has(time) ? 'disponible' : 'sin-horario', classes: mine }
+  })
+}
+
+export type DayCounts = {
+  total: number
+  realizadas: number
+  programadas: number
+  ausentes: number
+  canceladas: number
+  recuperadas: number
+}
+
+/** Contadores de un dia para los indicadores del calendario mensual. */
+export function dayCounts(day: string, classes: ClassItem[]): DayCounts {
+  const mine = classes.filter((c) => c.date === day)
+  const count = (s: ClassStatus) => mine.filter((c) => c.status === s).length
+  return {
+    total: mine.length,
+    realizadas: count('Realizada') + count('Recuperada'),
+    programadas: count('Programada'),
+    ausentes: count('Ausente'),
+    canceladas: count('Cancelada'),
+    recuperadas: count('Recuperada'),
+  }
+}
+
+export type StudentPlanInput = {
+  rules: Recurrence[]
+  studentName: string
+  from: string
+  to: string
+  /** Tope total de clases del periodo, compartido entre todas las reglas. */
+  limit?: number
+  cycleId?: number | string
+}
+
+/**
+ * Materializa TODAS las reglas de un alumno con un presupuesto compartido.
+ *
+ * El problema del presupuesto por regla era que un alumno con dos horarios
+ * generaba `included` clases por cada uno (el doble de lo contratado). Aqui se
+ * juntan las fechas de todas las reglas, se ordenan cronologicamente y se
+ * cortan al limite de la mensualidad.
+ */
+export function planStudent(input: StudentPlanInput): ClassItem[] {
+  const { rules, studentName, from, to, limit = 0, cycleId } = input
+  const candidates: { rule: Recurrence; day: string }[] = []
+  for (const rule of rules) {
+    if (!rule.active) continue
+    const inicio = from > rule.start ? from : rule.start
+    ruleDates(rule.days, inicio, to, 0).forEach((day) => candidates.push({ rule, day }))
+  }
+  candidates.sort((a, b) => a.day.localeCompare(b.day) || a.rule.time.localeCompare(b.rule.time))
+  const chosen = limit > 0 ? candidates.slice(0, limit) : candidates
+  return chosen.map(({ rule, day }) => ({
+    id: classId(rule.id, day),
+    studentId: rule.studentId,
+    student: studentName,
+    date: day,
+    time: rule.time,
+    court: rule.court,
+    duration: rule.duration,
+    type: 'recurrente' as const,
+    status: 'Programada' as const,
+    recurrenceId: rule.id,
+    cycleId,
+  }))
+}

@@ -343,6 +343,29 @@ async function main() {
   check('MoneyField es texto numerico', /type="text"/.test(srcPage) && /inputMode="numeric"/.test(srcPage))
   check('los tres guardados usan parseAmount', (srcPage.match(/parseAmount\(f\.get\('amount'\)\)/g) || []).length === 3 && /received:parseAmount\(f\.get\('received'\)\)/.test(srcPage))
 
+  // El calendario nuevo: cabecera con rango en palabras, dias identificados,
+  // calendario mensual, detalle del dia y horario por dia del alumno.
+  console.log('\n== calendario nuevo (requisitos 3, 4, 6, 7, 19, 21, 23, 28) ==')
+  const srcCss = fs.readFileSync(path.join(__dirname, '..', 'app', 'globals.css'), 'utf8')
+  check('la lista vertical de dias dejo de renderizarse', !/.agenda-days/.test(srcPage), srcPage.match(/agenda-days/g)?.length)
+  check('el scroll del calendario nunca se oculta', !/calendar-scroll\{[^}]*display:none/.test(srcCss))
+  check('la grilla conserva ancho minimo para scrollear', /minmax\(88px,1fr\)/.test(srcCss))
+  check('la grilla no se desborda en escritorio y fija la columna de horas', /width:100%;min-width:678px/.test(srcCss))
+  check('la cabecera usa el rango en palabras', /weekRangeLabel\(days\)/.test(srcPage))
+  check('cada dia se identifica con LUN 06', /dayHeadLabel\(d,days\[0\]\)/.test(srcPage))
+  check('la cabecera del dia abre su detalle', /className="day-head"/.test(srcPage))
+  check('hay calendario mensual', /function MonthCalendar/.test(srcPage) && /monthCells\(month\.year,month\.month\)/.test(srcPage))
+  check('la semana visible se resalta en el mes', /in-week/.test(srcPage) && /weekDays\.includes\(cell\)/.test(srcPage))
+  check('clic en un dia del mes salta a la semana', /setWeek\(weekOffsetFor\(d,today\)\)/.test(srcPage))
+  check('navegar el mes con flechas y HOY', /shiftMonth\(m\.year,m\.month,-1\)/.test(srcPage) && /setMonth\(monthOf\(today\)\)/.test(srcPage))
+  check('hay detalle del dia', /function DayDetail/.test(srcPage) && /daySchedule\(day,mine,configured\)/.test(srcPage))
+const srcSched = fs.readFileSync(path.join(__dirname, '..', 'lib', 'schedule.ts'), 'utf8')
+  check('el detalle distingue los tres estados de la franja', /'ocupada'/.test(srcSched) && /'disponible'/.test(srcSched) && /'sin-horario'/.test(srcSched))
+check('el formulario de alumno tiene horario por dia', /name="trainingSchedule"/.test(srcPage) && /schedule-editor/.test(srcPage))
+check('guardar alumno reconcilia reglas', /reconcileRules\(recurrences,student\.id,specs/.test(srcPage))
+check('la materializacion usa presupuesto compartido', /planStudent\(\{rules:mine/.test(srcPage))
+check('guardar alumno conserva el horario', /trainingSchedule:formatTrainingSchedule\(slots\)/.test(srcPage))
+
   // limpieza
   await cleanupTestUsers(
     [],

@@ -8,21 +8,39 @@ import {
   calcDue,
   classDatesFrom,
   classId,
+  configuredTimesFor,
   date,
+  dayCounts,
+  dayHeadLabel,
+  daySchedule,
+  formatTrainingSchedule,
   iso,
+  monthCells,
+  monthContainsWeek,
+  monthOf,
+  monthTitle,
   nextClassFor,
   parseTrainingDays,
+  parseTrainingSchedule,
   planClasses,
+  planStudent,
   reconcileClasses,
   reassignStudent,
+  reconcileRules,
   ruleDates,
   sameId,
+  scheduleGroups,
+  shiftMonth,
   slotConflict,
   startOfWeek,
+  studentSchedule,
   studentSituation,
   studentStats,
   trainingDaysLabel,
+  trainingScheduleLabel,
   weekOf,
+  weekOffsetFor,
+  weekRangeLabel,
   weekdayOf,
   type ClassItem,
   type Cycle,
@@ -367,6 +385,98 @@ check('no hay regla que la vuelva a crear', applyPlan(filtrada, [], TODAY, 'r9')
 const m9 = applyPlan(m2.map((c) => ({ ...c, status: 'Realizada' as const })), [], TODAY, 'r9')
 check('las clases realizadas sobreviven a quitar la regla', m9.length === 4)
 check('siguen marcadas como realizadas', m9.every((c) => c.status === 'Realizada'))
+
+// ------------------------------------------------- etiquetas y meses (UI)
+section('13. Etiquetas del calendario')
+const semanaSep = weekOf(0, TODAY)
+check('rango de la semana en palabras', weekRangeLabel(semanaSep) === '21 — 27 de septiembre de 2026', weekRangeLabel(semanaSep))
+check('rango de la semana de octubre', weekRangeLabel(weekOf(2, TODAY)) === '5 — 11 de octubre de 2026', weekRangeLabel(weekOf(2, TODAY)))
+check('la semana que cruza de mes lleva los dos meses', weekRangeLabel(weekOf(1, TODAY)) === '28 de septiembre — 4 de octubre de 2026', weekRangeLabel(weekOf(1, TODAY)))
+check('la semana que cruza de año lleva los dos años', weekRangeLabel(['2026-12-28', '2027-01-03']) === '28 de diciembre de 2026 — 3 de enero de 2027', weekRangeLabel(['2026-12-28', '2027-01-03']))
+check('sin dias no rompe', weekRangeLabel([]) === '')
+check('encabezado del lunes', dayHeadLabel('2026-09-21', '2026-09-21') === 'LUN 21', dayHeadLabel('2026-09-21', '2026-09-21'))
+check('encabezado del domingo', dayHeadLabel('2026-09-27', '2026-09-21') === 'DOM 27', dayHeadLabel('2026-09-27', '2026-09-21'))
+check('el dia de otro mes agrega el mes', dayHeadLabel('2026-10-01', '2026-09-28') === 'JUE 01 OCT', dayHeadLabel('2026-10-01', '2026-09-28'))
+check('titulo del mes', monthTitle(2026, 9) === 'Octubre 2026', monthTitle(2026, 9))
+
+section('14. Celdas y navegacion del mes')
+const oct26 = monthCells(2026, 9)
+check('octubre 2026 ocupa 5 semanas', oct26.length === 35, `n=${oct26.length}`)
+check('arranca el lunes anterior', oct26[0] === '2026-09-28', oct26[0])
+check('el primer dia del mes esta en su celda', oct26[3] === '2026-10-01', oct26[3])
+check('el ultimo dia del mes esta en su celda', oct26[33] === '2026-10-31', oct26[33])
+check('cierra la semana completa', oct26[34] === '2026-11-01', oct26[34])
+const feb26 = monthCells(2026, 1)
+check('febrero 2026 arranca el lunes anterior', feb26[0] === '2026-01-26', feb26[0])
+check('febrero cae domingo y ocupa 5 semanas', feb26.length === 35 && feb26[6] === '2026-02-01')
+check('vuelta de año', eq(shiftMonth(2026, 11, 1), { year: 2027, month: 0 }))
+check('ida de año hacia atras', eq(shiftMonth(2026, 0, -1), { year: 2025, month: 11 }))
+check('mes de una fecha', eq(monthOf('2026-10-07'), { year: 2026, month: 9 }))
+check('la semana visible pisa el mes', monthContainsWeek(2026, 9, weekOf(2, TODAY)))
+check('la semana de septiembre no pisa octubre', !monthContainsWeek(2026, 9, weekOf(0, TODAY)))
+check('la semana que cruza si pisa septiembre', monthContainsWeek(2026, 8, weekOf(1, TODAY)))
+check('offset de semana hacia adelante', weekOffsetFor('2026-10-07', TODAY) === 2, `${weekOffsetFor('2026-10-07', TODAY)}`)
+check('offset de la semana actual', weekOffsetFor(TODAY, TODAY) === 0)
+check('offset de semana hacia atras', weekOffsetFor('2026-09-20', TODAY) === -1, `${weekOffsetFor('2026-09-20', TODAY)}`)
+
+section('15. Horario distinto por dia (requisito 21)')
+check('parsea "1:08:00,3:07:00"', eq(parseTrainingSchedule('1:08:00,3:07:00'), [{ day: 1, time: '08:00' }, { day: 3, time: '07:00' }]))
+check('acepta separador "=" y deduplica', eq(parseTrainingSchedule('2=18:00, 2:18:00, 4:20:00'), [{ day: 2, time: '18:00' }, { day: 4, time: '20:00' }]))
+check('ignora valores ilegibles', eq(parseTrainingSchedule('9:10:00, 8:xx, hola'), []))
+check('formatea y ordena', formatTrainingSchedule([{ day: 3, time: '7:00' }, { day: 1, time: '08:00' }, { day: 1, time: '08:00' }]) === '1:08:00,3:07:00', formatTrainingSchedule([{ day: 3, time: '7:00' }, { day: 1, time: '08:00' }, { day: 1, time: '08:00' }]))
+check('etiqueta del horario por dia', trainingScheduleLabel([{ day: 3, time: '07:00' }, { day: 1, time: '08:00' }]) === 'Lun 08:00 · Mie 07:00', trainingScheduleLabel([{ day: 3, time: '07:00' }, { day: 1, time: '08:00' }]))
+check('el horario explicito manda', eq(studentSchedule({ trainingSchedule: '1:08:00', trainingDays: 'Jueves', trainingTime: '20:00' }), [{ day: 1, time: '08:00' }]))
+check('sin horario explicito usa dias + hora', eq(studentSchedule({ trainingDays: 'Martes, Jueves', trainingTime: '18:00' }), [{ day: 2, time: '18:00' }, { day: 4, time: '18:00' }]))
+check('sin hora no hay horario', eq(studentSchedule({ trainingDays: 'Martes' }), []))
+check('agrupa por hora', eq(scheduleGroups([{ day: 3, time: '07:00' }, { day: 1, time: '08:00' }, { day: 1, time: '07:00' }]), [{ time: '07:00', days: [1, 3] }, { time: '08:00', days: [1] }]))
+
+section('16. Reconciliacion de reglas al editar el alumno')
+const regA: Recurrence = { id: 'ra', studentId: 'a1', days: [2, 4], time: '18:00', duration: 60, court: 'Cancha 1', start: '2026-09-01', active: true }
+const regB: Recurrence = { ...regA, id: 'rb', days: [1], time: '20:00' }
+const regOtro: Recurrence = { ...regA, id: 'rc', studentId: 'a2' }
+const reglaSoloA = reconcileRules([regA, regB, regOtro], 'a1', [{ days: [2, 4], time: '18:00', start: '2026-10-01' }], () => 'nuevo')
+check('sin cambios conserva el id de la regla', reglaSoloA.upserts.length === 1 && reglaSoloA.upserts[0].id === 'ra')
+check('la regla que sobra se desactiva', eq(reglaSoloA.removed, ['rb']))
+check('no toca reglas de otros alumnos', !reglaSoloA.removed.includes('rc') && !reglaSoloA.upserts.some((r) => r.id === 'rc'))
+const cambioHora = reconcileRules([regA, regB], 'a1', [{ days: [2], time: '19:00', start: '2026-10-01' }], () => 'nuevo')
+check('cambiar de hora reutiliza el id', cambioHora.upserts[0].id === 'ra' && cambioHora.upserts[0].time === '19:00', JSON.stringify(cambioHora.upserts))
+const dosHoras = reconcileRules([regA, regB], 'a1', [{ days: [2], time: '18:00', start: '2026-10-01' }, { days: [4], time: '21:00', start: '2026-10-01' }], () => 'nuevo')
+check('una hora coincide y la otra reutiliza la sobrante', eq(dosHoras.upserts.map((r) => [r.id, r.time]), [['ra', '18:00'], ['rb', '21:00']]), JSON.stringify(dosHoras.upserts))
+check('no queda nada por desactivar', eq(dosHoras.removed, []))
+const altaNueva = reconcileRules([regA], 'a1', [{ days: [2], time: '18:00', start: '2026-10-01' }, { days: [5], time: '09:00', start: '2026-10-01' }], () => 'nuevo')
+check('la franja nueva crea una regla', altaNueva.upserts.some((r) => r.id === 'nuevo' && r.time === '09:00'))
+const sinHorario = reconcileRules([regA, regB], 'a1', [], () => 'nuevo')
+check('sin horario se desactivan todas', eq(sinHorario.removed, ['ra', 'rb']))
+check('y no se crea ninguna', sinHorario.upserts.length === 0)
+
+section('17. Disponibilidad y detalle del dia')
+check('la regla activa marca la hora del dia', eq(configuredTimesFor(2, [], [regA]), ['18:00']))
+check('el horario del alumno tambien cuenta', eq(configuredTimesFor(2, [{ trainingDays: 'Martes', trainingTime: '19:00' }], []), ['19:00']))
+check('la regla inactiva no cuenta', eq(configuredTimesFor(2, [], [{ ...regA, active: false }]), []))
+const diaClases: ClassItem[] = [
+  { id: 'x1', studentId: 'a1', student: 'Juan', date: '2026-10-06', time: '18:00', court: 'Cancha 1', duration: 60, type: 'recurrente', status: 'Realizada' },
+  { id: 'x2', studentId: 'a2', student: 'Ana', date: '2026-10-06', time: '18:00', court: 'Cancha 1', duration: 60, type: 'unica', status: 'Programada' },
+  { id: 'x3', studentId: 'a1', student: 'Juan', date: '2026-10-06', time: '20:00', court: 'Cancha 2', duration: 60, type: 'unica', status: 'Ausente' },
+]
+const timeline = daySchedule('2026-10-06', diaClases, ['19:00', '20:00'], ['17:00', '18:00', '19:00', '20:00'])
+check('la franja con clases queda ocupada', timeline[1].state === 'ocupada' && timeline[1].classes.length === 2, JSON.stringify(timeline.map((t) => `${t.time}:${t.state}`)))
+check('la franja configurada sin clases queda disponible', timeline[2].state === 'disponible')
+check('la franja sin clase ni horario no inventa disponibilidad', timeline[0].state === 'sin-horario' && timeline[3].state === 'ocupada')
+const counts = dayCounts('2026-10-06', diaClases)
+check('cuenta las clases del dia', counts.total === 3)
+check('cuenta realizadas y programadas', counts.realizadas === 1 && counts.programadas === 1 && counts.ausentes === 1)
+
+section('18. Presupuesto compartido entre reglas del alumno (requisito 23)')
+const rA: Recurrence = { ...regA, id: 'rA', days: [2], time: '18:00' }
+const rB: Recurrence = { ...regA, id: 'rB', days: [4], time: '20:00' }
+const compartido = planStudent({ rules: [rA, rB], studentName: 'Juan Perez', from: '2026-10-01', to: '2026-10-29', limit: 4 })
+check('no supera el presupuesto total', compartido.length === 4, `n=${compartido.length}`)
+check('reparte entre las dos reglas', compartido.filter((c) => sameId(c.recurrenceId, 'rA')).length === 2 && compartido.filter((c) => sameId(c.recurrenceId, 'rB')).length === 2, compartido.map((c) => `${c.recurrenceId}@${c.date}`).join(','))
+check('las fechas son las mas proximas', eq(compartido.map((c) => c.date), ['2026-10-01', '2026-10-06', '2026-10-08', '2026-10-13']), compartido.map((c) => c.date).join(','))
+check('los ids se derivan de regla y fecha', compartido[0].id === classId('rB', '2026-10-01'))
+check('con una sola regla coincide con planClasses', eq(planStudent({ rules: [rA], studentName: 'X', from: '2026-10-01', to: '2026-10-29', limit: 4 }).map((c) => c.id), planClasses({ recurrence: rA, studentName: 'X', from: '2026-10-01', to: '2026-10-29', limit: 4 }).map((c) => c.id)))
+check('sin limite toma todas', planStudent({ rules: [rA], studentName: 'X', from: '2026-10-01', to: '2026-10-29' }).length === 4)
+check('una regla inactiva no aporta', planStudent({ rules: [{ ...rA, active: false }], studentName: 'X', from: '2026-10-01', to: '2026-10-29' }).length === 0)
 
 console.log(`\n================  ${passed} pruebas OK / ${failures.length} fallos  ================`)
 if (failures.length) {
