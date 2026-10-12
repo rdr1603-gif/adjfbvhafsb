@@ -364,7 +364,20 @@ const srcSched = fs.readFileSync(path.join(__dirname, '..', 'lib', 'schedule.ts'
 check('el formulario de alumno tiene horario por dia', /name="trainingSchedule"/.test(srcPage) && /schedule-editor/.test(srcPage))
 check('guardar alumno reconcilia reglas', /reconcileRules\(recurrences,student\.id,specs/.test(srcPage))
 check('la materializacion usa presupuesto compartido', /planStudent\(\{rules:mine/.test(srcPage))
-check('guardar alumno conserva el horario', /trainingSchedule:formatTrainingSchedule\(slots\)/.test(srcPage))
+  check('guardar alumno conserva el horario', /trainingSchedule:formatTrainingSchedule\(slots\)/.test(srcPage))
+
+  // Etapa 1 (P1): la ficha del alumno se abre, editar siempre abre el formulario
+  // y el selector de alumno permite buscar por nombre o telefono.
+  console.log('\n== etapa 1 (P1): ficha, edicion y selector con busqueda ==')
+  check('la ficha del alumno se renderiza al abrir', /modal==='student'&&selectedStudent&&<StudentDetail/.test(srcPage))
+  check('el formulario de alumno tiene su propio modal', /modal==='studentForm'&&<StudentForm/.test(srcPage))
+  check('editar abre siempre el formulario', /onEdit=\{\(s:Student\)=>\{setEditingStudent\(s\);setModal\('studentForm'\)\}\}/.test(srcPage))
+  check('la ficha ofrece Editar', /onClick=\{onEdit\}>Editar<\/button>/.test(srcPage))
+  check('cerrar la ficha limpia la seleccion', /onClose=\{\(\)=>\{setSelectedStudent\(null\);setModal\(null\)\}\}/.test(srcPage))
+  check('hay selector de alumno con busqueda', /function StudentPicker/.test(srcPage) && /className="picker-field"/.test(srcPage))
+  check('los tres formularios usan StudentPicker', (srcPage.match(/<StudentPicker label="Alumno" name="studentId"/g) || []).length === 3)
+  check('guardar alumno exige telefono', /if\(!phone\)\{alert\('El teléfono es obligatorio/.test(srcPage))
+  check('el formulario de alumno valida con mensajes propios', /className="student-form" noValidate/.test(srcPage))
 
   // limpieza
   await cleanupTestUsers(

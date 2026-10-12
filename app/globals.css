@@ -236,3 +236,12 @@ nav { display:flex; flex-direction:column; gap:5px; }.nav-item { display:flex; g
 .schedule-row{display:flex;align-items:center;gap:10px;margin:7px 0!important;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:#fbfcfc}
 .schedule-row span{flex:1;font-size:calc(11px * var(--fs,1));font-weight:700}
 .schedule-row input{width:auto}
+
+/* ---- Selector de alumno con búsqueda ---- */
+.student-picker{position:relative}
+.picker-field{width:100%}
+.picker-menu{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:30;max-height:240px;overflow:auto;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 10px 24px rgba(0,0,0,.12)}
+.picker-option{display:flex;flex-direction:column;gap:1px;width:100%;text-align:left;padding:9px 12px;border:0;background:#fff;cursor:pointer}
+.picker-option small{color:var(--muted);font-size:calc(10px * var(--fs,1))}
+.picker-option:hover,.picker-option.active{background:var(--soft-green)}
+.picker-empty{padding:10px 12px;color:var(--muted);font-size:calc(11px * var(--fs,1))}
