@@ -391,6 +391,7 @@ check('la materializacion usa presupuesto compartido', /planStudent\(\{rules:min
   check('editar horario regenera reglas y re-materializa el calendario', srcPage.includes('reconcileRules(recurrences,id,specs,newId)') && srcPage.includes('patchStudent(id,patch,{reschedule:true})'))
   check('el importe se guarda en el alumno y en la mensualidad activa', srcPage.includes('const patchAmount=(id:number|string,value:number)') && srcPage.includes('{...c,amount}'))
   check('las clases del periodo actualizan el ciclo activo', srcPage.includes('const patchIncluded=(id:number|string,value:number)') && srcPage.includes('{...c,included,end:due}'))
+  check('editar el vencimiento actualiza el ciclo activo', srcPage.includes('const patchDue=(id:number|string,value:string)') && srcPage.includes('onDue={patchDue}'))
   check('la planilla reutiliza el buscador y los filtros', srcPage.includes('Buscar por nombre, telefono o nivel') && srcPage.includes('chip-filter'))
   check('la planilla se adapta a movil con tarjetas', srcPage.includes('student-card') && srcPage.includes('mobile-only'))
   check('estilos de planilla presentes', /\.ws-table\{/.test(srcCss) && /\.ws-day\.on\{/.test(srcCss) && /\.ws-input:focus\{/.test(srcCss))
