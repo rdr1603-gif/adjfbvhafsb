@@ -379,6 +379,22 @@ check('la materializacion usa presupuesto compartido', /planStudent\(\{rules:min
   check('guardar alumno exige telefono', /if\(!phone\)\{alert\('El teléfono es obligatorio/.test(srcPage))
   check('el formulario de alumno valida con mensajes propios', /className="student-form" noValidate/.test(srcPage))
 
+  // Etapa 2: planilla tipo Excel. Edita en linea sobre los MISMOS registros
+  // (students/cycles) y reutiliza reconcileRules + re-materializacion del
+  // calendario; no existe una segunda fuente de datos.
+  console.log('\n== etapa 2: planilla editable sobre los mismos datos ==')
+  check('hay una seccion Planilla en el menu', srcPage.includes("'worksheet',Table2,'Planilla'"))
+  check('la seccion Planilla renderiza el componente Worksheet', srcPage.includes("section==='worksheet'?<Worksheet"))
+  check('existe el componente Worksheet', srcPage.includes('function Worksheet('))
+  check('las celdas se editan en linea y confirman con Enter/blur', srcPage.includes('function InlineText(') && srcPage.includes("if(e.key==='Enter')"))
+  check('la planilla tiene editor de dias y horario por dia', srcPage.includes('function WorksheetSchedule(') && srcPage.includes("className={'ws-day'"))
+  check('editar horario regenera reglas y re-materializa el calendario', srcPage.includes('reconcileRules(recurrences,id,specs,newId)') && srcPage.includes('patchStudent(id,patch,{reschedule:true})'))
+  check('el importe se guarda en el alumno y en la mensualidad activa', srcPage.includes('const patchAmount=(id:number|string,value:number)') && srcPage.includes('{...c,amount}'))
+  check('las clases del periodo actualizan el ciclo activo', srcPage.includes('const patchIncluded=(id:number|string,value:number)') && srcPage.includes('{...c,included,end:due}'))
+  check('la planilla reutiliza el buscador y los filtros', srcPage.includes('Buscar por nombre, telefono o nivel') && srcPage.includes('chip-filter'))
+  check('la planilla se adapta a movil con tarjetas', srcPage.includes('student-card') && srcPage.includes('mobile-only'))
+  check('estilos de planilla presentes', /\.ws-table\{/.test(srcCss) && /\.ws-day\.on\{/.test(srcCss) && /\.ws-input:focus\{/.test(srcCss))
+
   // limpieza
   await cleanupTestUsers(
     [],
