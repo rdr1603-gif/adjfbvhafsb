@@ -396,6 +396,19 @@ check('la materializacion usa presupuesto compartido', /planStudent\(\{rules:min
   check('la planilla se adapta a movil con tarjetas', srcPage.includes('student-card') && srcPage.includes('mobile-only'))
   check('estilos de planilla presentes', /\.ws-table\{/.test(srcCss) && /\.ws-day\.on\{/.test(srcCss) && /\.ws-input:focus\{/.test(srcCss))
 
+  // Etapa 3: exportar e importar CSV (Excel). Todo ocurre en el navegador y
+  // escribe sobre los mismos registros.
+  console.log('\n== etapa 3: exportar e importar CSV ==')
+  check('hay exportacion a CSV', srcPage.includes('const studentsToCSV=') && srcPage.includes('const EXPORT_HEADERS=') && srcPage.includes("CSV_SEP=';'"))
+  check('el CSV sale con BOM para Excel', srcPage.includes("'\\ufeff'+content"))
+  check('hay parser de CSV con detector de separador', srcPage.includes('const parseCSV=') && srcPage.includes('const detectDelim='))
+  check('el importador reconoce los titulos de las columnas', srcPage.includes("nombre:'name'") && srcPage.includes("telefono:'phone'") && srcPage.includes("dias:'days'") && srcPage.includes("horario:'schedule'"))
+  check('lee dias y horario por dia desde el CSV', srcPage.includes('const slotsFromCells=') && srcPage.includes('const parseSchedulePairs='))
+  check('hay modal de importacion con vista previa', srcPage.includes('function ImportStudentsModal(') && srcPage.includes('para importar'))
+  check('la importacion crea alumnos, mensualidad y reglas reutilizando el motor', srcPage.includes('const importStudents=(candidates:any[])') && srcPage.includes('reconcileRules([],id,specs,newId)'))
+  check('los botones Exportar e Importar estan en la Planilla', srcPage.includes('Exportar</button>') && srcPage.includes('Importar</button>') && srcPage.includes('setShowImport(true)'))
+  check('estilos de importacion presentes', /\.import-row\{/.test(srcCss))
+
   // limpieza
   await cleanupTestUsers(
     [],
